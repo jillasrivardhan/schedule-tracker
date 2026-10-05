@@ -1,6 +1,12 @@
 
 langchain
 langchain-ollama
+langchain-core
+tzdata
 langgraph
 pydantic
 python-dotenv
+streamlit
+fastapi
+uvicorn
+apscheduler
