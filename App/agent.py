@@ -1,50 +1,53 @@
-from typing import Annotated, TypedDict
-from datetime import datetime
-from zoneinfo import ZoneInfo
-
+from typing import TypedDict, Annotated
 
 from langchain_ollama import ChatOllama
 from langchain_core.tools import tool
 from langchain_core.messages import (
     BaseMessage,
     HumanMessage,
-    SystemMessage
+    SystemMessage,
 )
-from langgraph.graph import (
-    StateGraph,
-    START,
-    END
-)
+from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
+
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from database.database import (
     get_all_tasks,
     get_user_preferences,
-    get_calendar_events
+    get_calendar_events,
 )
-from App.models import DailySchedule
+
 from App.prompts import SCHEDULE_PLANNER_PROMPT
+from App.planner import generate_schedule
 from App.validator import validate_schedule
-# ============================================================
-# 1. AGENT STATE
-# ============================================================
+
+
+# --------------------------------------------------
+# STATE
+# --------------------------------------------------
 
 class AgentState(TypedDict):
-
-    messages: Annotated[
-        list[BaseMessage],
-        add_messages
-    ]
-
+    messages: Annotated[list[BaseMessage], add_messages]
     planning_context: str
-
     schedule: dict
 
 
-# ============================================================
-# 2. CURRENT TIME TOOL
-# ============================================================
+# --------------------------------------------------
+# LLM
+# --------------------------------------------------
+
+llm = ChatOllama(
+    model="qwen2.5:3b",
+    temperature=0
+)
+
+
+# --------------------------------------------------
+# TOOLS
+# --------------------------------------------------
 
 @tool
 def get_current_time() -> str:
@@ -52,7 +55,7 @@ def get_current_time() -> str:
     Get the current date and time in India.
 
     Use this tool whenever the current date or time
-    is required.
+    is required for planning.
     """
 
     india_time = datetime.now(
@@ -64,74 +67,62 @@ def get_current_time() -> str:
     )
 
 
-# ============================================================
-# 3. TASK TOOL
-# ============================================================
-
 @tool
 def get_tasks() -> str:
     """
-    Get all pending tasks from the user's task database.
-
-    Use this tool whenever you need to know what tasks
-    the user needs to complete.
+    Get all pending user tasks.
     """
 
     tasks = get_all_tasks()
 
     if not tasks:
-        return "The user has no pending tasks."
+        return "No pending tasks."
 
-    result = "Pending tasks:\n\n"
+    result = []
 
     for task in tasks:
-
-        result += (
-            f"Task ID: {task['id']}\n"
-            f"Title: {task['title']}\n"
-            f"Description: {task['description']}\n"
-            f"Priority: {task['priority']}\n"
-            f"Deadline: {task['deadline']}\n"
-            f"Duration: {task['duration_minutes']} minutes\n"
-            f"Status: {task['status']}\n"
-            f"---\n"
+        result.append(
+            f"""
+Task: {task['title']}
+Description: {task['description']}
+Priority: {task['priority']}
+Deadline: {task['deadline']}
+Duration: {task['duration']} minutes
+Status: {task['status']}
+"""
         )
 
-    return result
+    return "\n".join(result)
+
 
 @tool
 def get_preferences() -> str:
     """
-    Get the user's daily scheduling preferences.
-
-    Use this tool whenever you need to know how the user
-    prefers their day to be organized.
+    Get the user's scheduling preferences.
     """
 
     preferences = get_user_preferences()
 
-    if preferences is None:
-        return "The user has not configured any preferences yet."
+    if not preferences:
+        return "No scheduling preferences found."
 
-    return (
-        f"Wake-up time: {preferences['wake_time']}\n"
-        f"Sleep time: {preferences['sleep_time']}\n"
-        f"Preferred work start: {preferences['preferred_work_start']}\n"
-        f"Preferred work end: {preferences['preferred_work_end']}\n"
-        f"Preferred deep work time: {preferences['preferred_deep_work_time']}\n"
-        f"Break duration: {preferences['break_duration_minutes']} minutes\n"
-        f"Exercise preference: {preferences['exercise_preference']}"
-    )
+    return f"""
+Wake time: {preferences['wake_time']}
+Sleep time: {preferences['sleep_time']}
+Preferred work start: {preferences['preferred_work_start']}
+Preferred work end: {preferences['preferred_work_end']}
+Preferred deep work time: {preferences['preferred_deep_work_time']}
+Break duration: {preferences['break_duration']} minutes
+Exercise preference: {preferences['exercise_preference']}
+"""
+
 
 @tool
 def get_calendar(date: str) -> str:
     """
-    Get the user's calendar events for a specific date.
+    Get calendar events for a specific date.
 
-    The date must be provided in YYYY-MM-DD format.
-
-    Use this tool whenever you need to know when the user
-    is already busy on a particular day.
+    Date must be YYYY-MM-DD.
     """
 
     events = get_calendar_events(date)
@@ -139,54 +130,41 @@ def get_calendar(date: str) -> str:
     if not events:
         return f"No calendar events found for {date}."
 
-    result = f"Calendar events for {date}:\n\n"
+    result = []
 
     for event in events:
-
-        result += (
-            f"Event: {event['title']}\n"
-            f"Start: {event['start_time']}\n"
-            f"End: {event['end_time']}\n"
-            f"Description: {event['description']}\n"
-            f"---\n"
+        result.append(
+            f"""
+Event: {event['title']}
+Date: {event['date']}
+Start: {event['start_time']}
+End: {event['end_time']}
+Description: {event['description']}
+"""
         )
 
-    return result
+    return "\n".join(result)
 
-# ============================================================
-# 4. LLM
-# ============================================================
-
-llm = ChatOllama(
-    model="qwen2.5:3b",
-    temperature=0
-)
-
-
-# ============================================================
-# 5. REGISTER TOOLS
-# ============================================================
 
 tools = [
     get_current_time,
     get_tasks,
     get_preferences,
-    get_calendar
+    get_calendar,
 ]
+
 
 llm_with_tools = llm.bind_tools(tools)
 
 
-# ============================================================
-# 6. AGENT NODE
-# ============================================================
+# --------------------------------------------------
+# AGENT NODE
+# --------------------------------------------------
 
 def agent_node(state: AgentState):
 
-    messages = state["messages"]
-
     response = llm_with_tools.invoke(
-        messages
+        state["messages"]
     )
 
     return {
@@ -194,115 +172,207 @@ def agent_node(state: AgentState):
     }
 
 
-# ============================================================
-# 7. TOOL NODE
-# ============================================================
+# --------------------------------------------------
+# TOOL NODE
+# --------------------------------------------------
 
 tool_node = ToolNode(tools)
 
 
-# ============================================================
-# 8. DECISION FUNCTION
-# ============================================================
+# --------------------------------------------------
+# BUILD PLANNING CONTEXT
+# --------------------------------------------------
 
-def should_continue(state: AgentState):
+def build_planning_context(state: AgentState):
+
+    tool_messages = []
+
+    for message in state["messages"]:
+
+        if message.type == "tool":
+
+            tool_messages.append(
+                message.content
+            )
+
+    planning_context = "\n\n".join(
+        tool_messages
+    )
+
+    return {
+        "planning_context": planning_context
+    }
+
+
+# --------------------------------------------------
+# PLANNING NODE
+# --------------------------------------------------
+
+def planning_node(state: AgentState):
+
+    schedule = generate_schedule(
+        state["planning_context"]
+    )
+
+    return {
+        "schedule": schedule.model_dump()
+    }
+
+
+# --------------------------------------------------
+# VALIDATION NODE
+# --------------------------------------------------
+
+def validation_node(state: AgentState):
+
+    schedule = state["schedule"]
+
+    result = validate_schedule(
+        schedule
+    )
+
+    if not result["valid"]:
+
+        print("\n❌ Schedule validation failed:")
+        print(result["error"])
+
+        return {
+            "messages": [
+                HumanMessage(
+                    content=f"""
+The generated schedule is invalid.
+
+Validation error:
+{result['error']}
+
+Create a corrected schedule.
+"""
+                )
+            ]
+        }
+
+    print("\n✅ Schedule validation successful.")
+
+    return {}
+
+
+# --------------------------------------------------
+# ROUTING
+# --------------------------------------------------
+
+def route_after_agent(state: AgentState):
 
     last_message = state["messages"][-1]
 
-    if last_message.tool_calls:
+    if getattr(last_message, "tool_calls", None):
+
         return "tools"
 
-    return END
+    return "planning_context"
 
 
-# ============================================================
-# 9. BUILD GRAPH
-# ============================================================
+# --------------------------------------------------
+# GRAPH
+# --------------------------------------------------
 
-graph_builder = StateGraph(AgentState)
+graph = StateGraph(AgentState)
 
 
-graph_builder.add_node(
+graph.add_node(
     "agent",
     agent_node
 )
 
-
-graph_builder.add_node(
+graph.add_node(
     "tools",
     tool_node
 )
 
+graph.add_node(
+    "planning_context",
+    build_planning_context
+)
 
-graph_builder.add_edge(
+graph.add_node(
+    "planner",
+    planning_node
+)
+
+graph.add_node(
+    "validator",
+    validation_node
+)
+
+
+graph.add_edge(
     START,
     "agent"
 )
 
-
-graph_builder.add_conditional_edges(
+graph.add_conditional_edges(
     "agent",
-    should_continue,
+    route_after_agent,
     {
         "tools": "tools",
-        END: END
+        "planning_context": "planning_context",
     }
 )
 
-
-graph_builder.add_edge(
+graph.add_edge(
     "tools",
     "agent"
 )
 
+graph.add_edge(
+    "planning_context",
+    "planner"
+)
 
-agent = graph_builder.compile()
+graph.add_edge(
+    "planner",
+    "validator"
+)
+
+graph.add_edge(
+    "validator",
+    END
+)
 
 
-# ============================================================
-# 10. RUN AGENT
-# ============================================================
+agent = graph.compile()
+
+
+# --------------------------------------------------
+# RUN AGENT
+# --------------------------------------------------
 
 if __name__ == "__main__":
 
-    print("\n======================================")
-    print("       DAILY SCHEDULE AGENT")
-    print("======================================")
+    user_input = input(
+        "\nWhat would you like me to plan? "
+    )
 
-    print("\nAvailable tools:")
-    print("- get_current_time")
-    print("- get_tasks")
-    print("- get_preferences")
-    print("- get_calendar")
+    messages = [
+        SystemMessage(
+            content=SCHEDULE_PLANNER_PROMPT
+        ),
+        HumanMessage(
+            content=user_input
+        ),
+    ]
 
-    print("\nType 'exit' to quit.\n")
+    result = agent.invoke(
+        {
+            "messages": messages,
+            "planning_context": "",
+            "schedule": {},
+        }
+    )
 
-    while True:
+    print("\n" + "=" * 50)
+    print("FINAL SCHEDULE")
+    print("=" * 50)
 
-        user_input = input("You: ")
-
-        if user_input.lower() == "exit":
-            break
-
-        messages = [
-            SystemMessage(
-                content=SCHEDULE_PLANNER_PROMPT
-            ),
-            HumanMessage(
-                content=user_input
-            )
-        ]
-
-        result = agent.invoke(
-            {
-                "messages": messages,
-                "planning_context": "",
-                "schedule": {}
-            }
-        )
-
-        final_message = result["messages"][-1]
-
-        print("\nAgent:")
-        print(final_message.content)
-        print()
+    print(
+        result["schedule"]
+    )

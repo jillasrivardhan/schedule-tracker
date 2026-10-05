@@ -27,9 +27,9 @@ def create_tables():
     connection = get_connection()
     cursor = connection.cursor()
 
-    # -----------------------------
+    # --------------------------------------------------------
     # Tasks table
-    # -----------------------------
+    # --------------------------------------------------------
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS tasks (
@@ -43,9 +43,9 @@ def create_tables():
         )
     """)
 
-    # -----------------------------
+    # --------------------------------------------------------
     # Preferences table
-    # -----------------------------
+    # --------------------------------------------------------
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS preferences (
@@ -59,9 +59,10 @@ def create_tables():
             exercise_preference TEXT NOT NULL
         )
     """)
-        # -----------------------------
+
+    # --------------------------------------------------------
     # Calendar events table
-    # -----------------------------
+    # --------------------------------------------------------
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS calendar_events (
@@ -73,7 +74,6 @@ def create_tables():
             description TEXT
         )
     """)
-
 
     connection.commit()
     connection.close()
@@ -120,7 +120,7 @@ def add_task(
 
 
 # ============================================================
-# GET TASKS
+# GET PENDING TASKS
 # ============================================================
 
 def get_all_tasks():
@@ -163,7 +163,7 @@ def get_all_tasks():
             "description": row[2],
             "priority": row[3],
             "deadline": row[4],
-            "duration_minutes": row[5],
+            "duration": row[5],
             "status": row[6]
         })
 
@@ -187,7 +187,7 @@ def add_preferences(
     connection = get_connection()
     cursor = connection.cursor()
 
-    # Only keep one preference profile for now
+    # Keep only one preference profile for now
     cursor.execute("DELETE FROM preferences")
 
     cursor.execute("""
@@ -217,7 +217,7 @@ def add_preferences(
 
 
 # ============================================================
-# GET PREFERENCES
+# GET USER PREFERENCES
 # ============================================================
 
 def get_user_preferences():
@@ -251,9 +251,10 @@ def get_user_preferences():
         "preferred_work_start": row[2],
         "preferred_work_end": row[3],
         "preferred_deep_work_time": row[4],
-        "break_duration_minutes": row[5],
+        "break_duration": row[5],
         "exercise_preference": row[6]
     }
+
 
 # ============================================================
 # ADD CALENDAR EVENT
@@ -332,6 +333,7 @@ def get_calendar_events(date):
         })
 
     return events
+
 
 # ============================================================
 # INITIALIZE DATABASE
