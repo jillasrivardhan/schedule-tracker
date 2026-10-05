@@ -59,6 +59,21 @@ def create_tables():
             exercise_preference TEXT NOT NULL
         )
     """)
+        # -----------------------------
+    # Calendar events table
+    # -----------------------------
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS calendar_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            date TEXT NOT NULL,
+            start_time TEXT NOT NULL,
+            end_time TEXT NOT NULL,
+            description TEXT
+        )
+    """)
+
 
     connection.commit()
     connection.close()
@@ -240,6 +255,83 @@ def get_user_preferences():
         "exercise_preference": row[6]
     }
 
+# ============================================================
+# ADD CALENDAR EVENT
+# ============================================================
+
+def add_calendar_event(
+    title,
+    date,
+    start_time,
+    end_time,
+    description=""
+):
+
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute("""
+        INSERT INTO calendar_events
+        (
+            title,
+            date,
+            start_time,
+            end_time,
+            description
+        )
+        VALUES (?, ?, ?, ?, ?)
+    """, (
+        title,
+        date,
+        start_time,
+        end_time,
+        description
+    ))
+
+    connection.commit()
+    connection.close()
+
+
+# ============================================================
+# GET CALENDAR EVENTS
+# ============================================================
+
+def get_calendar_events(date):
+
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute("""
+        SELECT
+            id,
+            title,
+            date,
+            start_time,
+            end_time,
+            description
+        FROM calendar_events
+        WHERE date = ?
+        ORDER BY start_time
+    """, (date,))
+
+    rows = cursor.fetchall()
+
+    connection.close()
+
+    events = []
+
+    for row in rows:
+
+        events.append({
+            "id": row[0],
+            "title": row[1],
+            "date": row[2],
+            "start_time": row[3],
+            "end_time": row[4],
+            "description": row[5]
+        })
+
+    return events
 
 # ============================================================
 # INITIALIZE DATABASE

@@ -18,7 +18,8 @@ from langgraph.prebuilt import ToolNode
 
 from database.database import (
     get_all_tasks,
-    get_user_preferences
+    get_user_preferences,
+    get_calendar_events
 )
 
 
@@ -111,6 +112,36 @@ def get_preferences() -> str:
         f"Exercise preference: {preferences['exercise_preference']}"
     )
 
+@tool
+def get_calendar(date: str) -> str:
+    """
+    Get the user's calendar events for a specific date.
+
+    The date must be provided in YYYY-MM-DD format.
+
+    Use this tool whenever you need to know when the user
+    is already busy on a particular day.
+    """
+
+    events = get_calendar_events(date)
+
+    if not events:
+        return f"No calendar events found for {date}."
+
+    result = f"Calendar events for {date}:\n\n"
+
+    for event in events:
+
+        result += (
+            f"Event: {event['title']}\n"
+            f"Start: {event['start_time']}\n"
+            f"End: {event['end_time']}\n"
+            f"Description: {event['description']}\n"
+            f"---\n"
+        )
+
+    return result
+
 # ============================================================
 # 4. LLM
 # ============================================================
@@ -128,7 +159,8 @@ llm = ChatOllama(
 tools = [
     get_current_time,
     get_tasks,
-    get_preferences
+    get_preferences,
+    get_calendar
 ]
 
 llm_with_tools = llm.bind_tools(tools)
@@ -228,6 +260,7 @@ if __name__ == "__main__":
     print("- get_current_time")
     print("- get_tasks")
     print("- get_preferences")
+    print("- get_calendar")
 
     print("\nType 'exit' to quit.\n")
 
