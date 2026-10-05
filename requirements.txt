@@ -2,6 +2,7 @@
 langchain
 langchain-ollama
 langchain-core
+langchain-openai
 tzdata
 langgraph
 pydantic

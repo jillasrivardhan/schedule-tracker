@@ -33,6 +33,10 @@ class AgentState(TypedDict):
     messages: Annotated[list[BaseMessage], add_messages]
     planning_context: str
     schedule: dict
+    preferences: dict
+    calendar_events: list
+    validation_error: str
+    retry_count: int
 
 
 # --------------------------------------------------
@@ -69,85 +73,60 @@ def get_current_time() -> str:
 
 @tool
 def get_tasks() -> str:
-    """
-    Get all pending user tasks.
-    """
+    """Get all pending tasks."""
 
     tasks = get_all_tasks()
 
     if not tasks:
         return "No pending tasks."
 
-    result = []
-
-    for task in tasks:
-        result.append(
-            f"""
-Task: {task['title']}
-Description: {task['description']}
-Priority: {task['priority']}
-Deadline: {task['deadline']}
-Duration: {task['duration']} minutes
-Status: {task['status']}
-"""
-        )
-
-    return "\n".join(result)
+    return "\n".join(
+        f"{task['title']} | "
+        f"priority={task['priority']} | "
+        f"duration={task['duration']}m | "
+        f"deadline={task['deadline']}"
+        for task in tasks
+    )
 
 
 @tool
 def get_preferences() -> str:
-    """
-    Get the user's scheduling preferences.
-    """
+    """Get the user's scheduling preferences."""
 
     preferences = get_user_preferences()
 
     if not preferences:
-        return "No scheduling preferences found."
+        return "No preferences found."
 
-    return f"""
-Wake time: {preferences['wake_time']}
-Sleep time: {preferences['sleep_time']}
-Preferred work start: {preferences['preferred_work_start']}
-Preferred work end: {preferences['preferred_work_end']}
-Preferred deep work time: {preferences['preferred_deep_work_time']}
-Break duration: {preferences['break_duration']} minutes
-Exercise preference: {preferences['exercise_preference']}
-"""
+    return (
+        f"wake={preferences['wake_time']} | "
+        f"sleep={preferences['sleep_time']} | "
+        f"work={preferences['preferred_work_start']}-"
+        f"{preferences['preferred_work_end']} | "
+        f"deep_work={preferences['preferred_deep_work_time']} | "
+        f"break={preferences['break_duration']}m | "
+        f"exercise={preferences['exercise_preference']}"
+    )
+
 
 
 @tool
 def get_calendar(date: str) -> str:
-    """
-    Get calendar events for a specific date.
-
-    Date must be YYYY-MM-DD.
-    """
+    """Get calendar events for a specific date."""
 
     events = get_calendar_events(date)
 
     if not events:
-        return f"No calendar events found for {date}."
+        return f"No events on {date}."
 
-    result = []
-
-    for event in events:
-        result.append(
-            f"""
-Event: {event['title']}
-Date: {event['date']}
-Start: {event['start_time']}
-End: {event['end_time']}
-Description: {event['description']}
-"""
-        )
-
-    return "\n".join(result)
+    return "\n".join(
+        f"{event['start_time']}-{event['end_time']} | "
+        f"{event['title']}"
+        for event in events
+    )
 
 
 tools = [
-    get_current_time,
     get_tasks,
     get_preferences,
     get_calendar,
@@ -190,17 +169,27 @@ def build_planning_context(state: AgentState):
     for message in state["messages"]:
 
         if message.type == "tool":
+            tool_messages.append(message.content)
 
-            tool_messages.append(
-                message.content
-            )
+    planning_context = "\n\n".join(tool_messages)
 
-    planning_context = "\n\n".join(
-        tool_messages
+    # Get the actual preferences directly from database
+    preferences = get_user_preferences()
+
+    # Get calendar events for tomorrow
+    tomorrow = (
+        datetime.now(ZoneInfo("Asia/Kolkata"))
+        .date()
+    )
+
+    calendar_events = get_calendar_events(
+        tomorrow.isoformat()
     )
 
     return {
-        "planning_context": planning_context
+        "planning_context": planning_context,
+        "preferences": preferences or {},
+        "calendar_events": calendar_events
     }
 
 
@@ -227,8 +216,14 @@ def validation_node(state: AgentState):
 
     schedule = state["schedule"]
 
+    preferences = state["preferences"]
+
+    calendar_events = state["calendar_events"]
+
     result = validate_schedule(
-        schedule
+        schedule,
+        preferences,
+        calendar_events
     )
 
     if not result["valid"]:
@@ -237,24 +232,46 @@ def validation_node(state: AgentState):
         print(result["error"])
 
         return {
-            "messages": [
-                HumanMessage(
-                    content=f"""
-The generated schedule is invalid.
-
-Validation error:
-{result['error']}
-
-Create a corrected schedule.
-"""
-                )
-            ]
+            "validation_error": result["error"],
+            "retry_count": state["retry_count"] + 1
         }
 
     print("\n✅ Schedule validation successful.")
 
-    return {}
+    return {
+        "validation_error": "",
+    }
 
+#--------------------------------------------------
+# replanning node
+#--------------------------------------------------
+
+def replanning_node(state: AgentState):
+
+    print("\n🔄 Re-planning schedule...")
+
+    retry_prompt = f"""
+The previous schedule was invalid.
+
+Validation error:
+{state["validation_error"]}
+
+Create a corrected schedule.
+
+Original planning context:
+{state["planning_context"]}
+
+Do not repeat the validation error.
+Return ONLY valid JSON in the required DailySchedule format.
+"""
+
+    schedule = generate_schedule(
+        retry_prompt
+    )
+
+    return {
+        "schedule": schedule.model_dump()
+    }
 
 # --------------------------------------------------
 # ROUTING
@@ -265,11 +282,21 @@ def route_after_agent(state: AgentState):
     last_message = state["messages"][-1]
 
     if getattr(last_message, "tool_calls", None):
-
         return "tools"
 
     return "planning_context"
 
+
+def route_after_validation(state: AgentState):
+
+    if state["validation_error"]:
+
+        if state["retry_count"] < 3:
+            return "replan"
+
+        print("\n⚠️ Maximum replanning attempts reached.")
+
+    return "end"
 
 # --------------------------------------------------
 # GRAPH
@@ -303,6 +330,10 @@ graph.add_node(
     validation_node
 )
 
+graph.add_node(
+    "replanner",
+    replanning_node
+)
 
 graph.add_edge(
     START,
@@ -333,18 +364,27 @@ graph.add_edge(
     "validator"
 )
 
-graph.add_edge(
+graph.add_conditional_edges(
     "validator",
-    END
+    route_after_validation,
+    {
+        "replan": "replanner",
+        "end": END
+    }
+)
+
+graph.add_edge(
+    "replanner",
+    "validator"
 )
 
 
 agent = graph.compile()
 
 
-# --------------------------------------------------
-# RUN AGENT
-# --------------------------------------------------
+# ============================================================
+# RUN AGENT FROM TERMINAL
+# ============================================================
 
 if __name__ == "__main__":
 
@@ -366,6 +406,10 @@ if __name__ == "__main__":
             "messages": messages,
             "planning_context": "",
             "schedule": {},
+            "preferences": {},
+            "calendar_events": [],
+            "validation_error": "",
+            "retry_count": 0
         }
     )
 
@@ -373,6 +417,24 @@ if __name__ == "__main__":
     print("FINAL SCHEDULE")
     print("=" * 50)
 
+    schedule = result["schedule"]
+
+    print("\nDate:", schedule["date"])
+
+    print("\nEvents:")
+
+    for event in schedule["events"]:
+
+        print(
+            f"{event['start_time']} - "
+            f"{event['end_time']} | "
+            f"{event['activity']} | "
+            f"{event['event_type']} | "
+            f"{event['priority']}"
+        )
+
+    print("\nPlanning Summary:")
+
     print(
-        result["schedule"]
+        schedule["planning_summary"]
     )

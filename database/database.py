@@ -75,6 +75,15 @@ def create_tables():
         )
     """)
 
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS schedules (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        date TEXT NOT NULL,
+        schedule_json TEXT NOT NULL,
+        status TEXT NOT NULL
+    )
+""")
+
     connection.commit()
     connection.close()
 
@@ -334,7 +343,58 @@ def get_calendar_events(date):
 
     return events
 
+def save_schedule(date, schedule_json, status="approved"):
 
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute("""
+        INSERT INTO schedules
+        (
+            date,
+            schedule_json,
+            status
+        )
+        VALUES (?, ?, ?)
+    """, (
+        date,
+        schedule_json,
+        status
+    ))
+
+    connection.commit()
+    connection.close()
+
+def get_saved_schedule(date):
+
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute("""
+        SELECT
+            id,
+            date,
+            schedule_json,
+            status
+        FROM schedules
+        WHERE date = ?
+        ORDER BY id DESC
+        LIMIT 1
+    """, (date,))
+
+    row = cursor.fetchone()
+
+    connection.close()
+
+    if row is None:
+        return None
+
+    return {
+        "id": row[0],
+        "date": row[1],
+        "schedule_json": row[2],
+        "status": row[3]
+    }
 # ============================================================
 # INITIALIZE DATABASE
 # ============================================================
