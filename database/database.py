@@ -2,31 +2,34 @@ import sqlite3
 from pathlib import Path
 
 
-# --------------------------------------------------
-# Database location
-# --------------------------------------------------
+# ============================================================
+# DATABASE LOCATION
+# ============================================================
 
 BASE_DIR = Path(__file__).resolve().parent
 DATABASE_PATH = BASE_DIR / "schedule.db"
 
 
-# --------------------------------------------------
-# Get database connection
-# --------------------------------------------------
+# ============================================================
+# DATABASE CONNECTION
+# ============================================================
 
 def get_connection():
     return sqlite3.connect(DATABASE_PATH)
 
 
-# --------------------------------------------------
-# Create tables
-# --------------------------------------------------
+# ============================================================
+# CREATE TABLES
+# ============================================================
 
 def create_tables():
 
     connection = get_connection()
-
     cursor = connection.cursor()
+
+    # -----------------------------
+    # Tasks table
+    # -----------------------------
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS tasks (
@@ -40,13 +43,30 @@ def create_tables():
         )
     """)
 
+    # -----------------------------
+    # Preferences table
+    # -----------------------------
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS preferences (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            wake_time TEXT NOT NULL,
+            sleep_time TEXT NOT NULL,
+            preferred_work_start TEXT NOT NULL,
+            preferred_work_end TEXT NOT NULL,
+            preferred_deep_work_time TEXT NOT NULL,
+            break_duration INTEGER NOT NULL,
+            exercise_preference TEXT NOT NULL
+        )
+    """)
+
     connection.commit()
     connection.close()
 
 
-# --------------------------------------------------
-# Add task
-# --------------------------------------------------
+# ============================================================
+# ADD TASK
+# ============================================================
 
 def add_task(
     title,
@@ -58,7 +78,6 @@ def add_task(
 ):
 
     connection = get_connection()
-
     cursor = connection.cursor()
 
     cursor.execute("""
@@ -85,14 +104,13 @@ def add_task(
     connection.close()
 
 
-# --------------------------------------------------
-# Get tasks
-# --------------------------------------------------
+# ============================================================
+# GET TASKS
+# ============================================================
 
 def get_all_tasks():
 
     connection = get_connection()
-
     cursor = connection.cursor()
 
     cursor.execute("""
@@ -137,12 +155,98 @@ def get_all_tasks():
     return tasks
 
 
-# --------------------------------------------------
-# Initialize database
-# --------------------------------------------------
+# ============================================================
+# ADD PREFERENCES
+# ============================================================
+
+def add_preferences(
+    wake_time,
+    sleep_time,
+    preferred_work_start,
+    preferred_work_end,
+    preferred_deep_work_time,
+    break_duration,
+    exercise_preference
+):
+
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    # Only keep one preference profile for now
+    cursor.execute("DELETE FROM preferences")
+
+    cursor.execute("""
+        INSERT INTO preferences
+        (
+            wake_time,
+            sleep_time,
+            preferred_work_start,
+            preferred_work_end,
+            preferred_deep_work_time,
+            break_duration,
+            exercise_preference
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (
+        wake_time,
+        sleep_time,
+        preferred_work_start,
+        preferred_work_end,
+        preferred_deep_work_time,
+        break_duration,
+        exercise_preference
+    ))
+
+    connection.commit()
+    connection.close()
+
+
+# ============================================================
+# GET PREFERENCES
+# ============================================================
+
+def get_user_preferences():
+
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute("""
+        SELECT
+            wake_time,
+            sleep_time,
+            preferred_work_start,
+            preferred_work_end,
+            preferred_deep_work_time,
+            break_duration,
+            exercise_preference
+        FROM preferences
+        LIMIT 1
+    """)
+
+    row = cursor.fetchone()
+
+    connection.close()
+
+    if row is None:
+        return None
+
+    return {
+        "wake_time": row[0],
+        "sleep_time": row[1],
+        "preferred_work_start": row[2],
+        "preferred_work_end": row[3],
+        "preferred_deep_work_time": row[4],
+        "break_duration_minutes": row[5],
+        "exercise_preference": row[6]
+    }
+
+
+# ============================================================
+# INITIALIZE DATABASE
+# ============================================================
 
 if __name__ == "__main__":
 
     create_tables()
 
-    print("Database created successfully.")
+    print("Database tables created successfully.")

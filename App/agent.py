@@ -16,7 +16,10 @@ from langgraph.graph import (
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
 
-from database.database import get_all_tasks
+from database.database import (
+    get_all_tasks,
+    get_user_preferences
+)
 
 
 # ============================================================
@@ -84,6 +87,29 @@ def get_tasks() -> str:
 
     return result
 
+@tool
+def get_preferences() -> str:
+    """
+    Get the user's daily scheduling preferences.
+
+    Use this tool whenever you need to know how the user
+    prefers their day to be organized.
+    """
+
+    preferences = get_user_preferences()
+
+    if preferences is None:
+        return "The user has not configured any preferences yet."
+
+    return (
+        f"Wake-up time: {preferences['wake_time']}\n"
+        f"Sleep time: {preferences['sleep_time']}\n"
+        f"Preferred work start: {preferences['preferred_work_start']}\n"
+        f"Preferred work end: {preferences['preferred_work_end']}\n"
+        f"Preferred deep work time: {preferences['preferred_deep_work_time']}\n"
+        f"Break duration: {preferences['break_duration_minutes']} minutes\n"
+        f"Exercise preference: {preferences['exercise_preference']}"
+    )
 
 # ============================================================
 # 4. LLM
@@ -101,9 +127,9 @@ llm = ChatOllama(
 
 tools = [
     get_current_time,
-    get_tasks
+    get_tasks,
+    get_preferences
 ]
-
 
 llm_with_tools = llm.bind_tools(tools)
 
@@ -201,6 +227,7 @@ if __name__ == "__main__":
     print("\nAvailable tools:")
     print("- get_current_time")
     print("- get_tasks")
+    print("- get_preferences")
 
     print("\nType 'exit' to quit.\n")
 
