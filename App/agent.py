@@ -1,10 +1,22 @@
-from typing import TypedDict
+from typing import Annotated, TypedDict
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from langchain_ollama import ChatOllama
 from langchain_core.tools import tool
-from langgraph.graph import StateGraph, START, END
+from langchain_core.messages import (
+    BaseMessage,
+    HumanMessage
+)
+from langgraph.graph import (
+    StateGraph,
+    START,
+    END
+)
+from langgraph.graph.message import add_messages
+from langgraph.prebuilt import ToolNode
+
+from database.database import get_all_tasks
 
 
 # ============================================================
@@ -12,11 +24,11 @@ from langgraph.graph import StateGraph, START, END
 # ============================================================
 
 class AgentState(TypedDict):
-    messages: list
+    messages: Annotated[list[BaseMessage], add_messages]
 
 
 # ============================================================
-# 2. TOOL
+# 2. CURRENT TIME TOOL
 # ============================================================
 
 @tool
@@ -24,12 +36,13 @@ def get_current_time() -> str:
     """
     Get the current date and time in India.
 
-    Use this tool whenever the user asks about the current
-    date or time, or when the current date/time is required
-    for planning.
+    Use this tool whenever the current date or time
+    is required.
     """
 
-    india_time = datetime.now(ZoneInfo("Asia/Kolkata"))
+    india_time = datetime.now(
+        ZoneInfo("Asia/Kolkata")
+    )
 
     return india_time.strftime(
         "%A, %d %B %Y, %I:%M:%S %p"
@@ -37,7 +50,43 @@ def get_current_time() -> str:
 
 
 # ============================================================
-# 3. LLM
+# 3. TASK TOOL
+# ============================================================
+
+@tool
+def get_tasks() -> str:
+    """
+    Get all pending tasks from the user's task database.
+
+    Use this tool whenever you need to know what tasks
+    the user needs to complete.
+    """
+
+    tasks = get_all_tasks()
+
+    if not tasks:
+        return "The user has no pending tasks."
+
+    result = "Pending tasks:\n\n"
+
+    for task in tasks:
+
+        result += (
+            f"Task ID: {task['id']}\n"
+            f"Title: {task['title']}\n"
+            f"Description: {task['description']}\n"
+            f"Priority: {task['priority']}\n"
+            f"Deadline: {task['deadline']}\n"
+            f"Duration: {task['duration_minutes']} minutes\n"
+            f"Status: {task['status']}\n"
+            f"---\n"
+        )
+
+    return result
+
+
+# ============================================================
+# 4. LLM
 # ============================================================
 
 llm = ChatOllama(
@@ -46,109 +95,92 @@ llm = ChatOllama(
 )
 
 
-# Give the model access to the tool
-llm_with_tools = llm.bind_tools(
-    [get_current_time]
-)
+# ============================================================
+# 5. REGISTER TOOLS
+# ============================================================
+
+tools = [
+    get_current_time,
+    get_tasks
+]
+
+
+llm_with_tools = llm.bind_tools(tools)
 
 
 # ============================================================
-# 4. AGENT NODE
+# 6. AGENT NODE
 # ============================================================
 
 def agent_node(state: AgentState):
 
-    messages = state["messages"]
-
-    response = llm_with_tools.invoke(messages)
+    response = llm_with_tools.invoke(
+        state["messages"]
+    )
 
     return {
-        "messages": messages + [response]
+        "messages": [response]
     }
 
 
 # ============================================================
-# 5. TOOL NODE
+# 7. TOOL NODE
 # ============================================================
 
-def tool_node(state: AgentState):
-
-    messages = state["messages"]
-
-    last_message = messages[-1]
-
-    tool_calls = last_message.tool_calls
-
-    tool_results = []
-
-    for tool_call in tool_calls:
-
-        if tool_call["name"] == "get_current_time":
-
-            result = get_current_time.invoke(
-                tool_call["args"]
-            )
-
-            tool_results.append(
-                {
-                    "role": "tool",
-                    "content": result,
-                    "tool_call_id": tool_call["id"]
-                }
-            )
-
-    return {
-        "messages": messages + tool_results
-    }
+tool_node = ToolNode(tools)
 
 
 # ============================================================
-# 6. DECISION FUNCTION
+# 8. DECISION FUNCTION
 # ============================================================
 
 def should_continue(state: AgentState):
 
     last_message = state["messages"][-1]
 
-    if getattr(last_message, "tool_calls", None):
-
-        return "tool"
+    if last_message.tool_calls:
+        return "tools"
 
     return END
 
 
 # ============================================================
-# 7. BUILD GRAPH
+# 9. BUILD GRAPH
 # ============================================================
 
 graph_builder = StateGraph(AgentState)
+
 
 graph_builder.add_node(
     "agent",
     agent_node
 )
 
+
 graph_builder.add_node(
-    "tool",
+    "tools",
     tool_node
 )
+
 
 graph_builder.add_edge(
     START,
     "agent"
 )
 
+
 graph_builder.add_conditional_edges(
     "agent",
     should_continue,
     {
-        "tool": "tool",
+        "tools": "tools",
         END: END
     }
 )
 
+
 graph_builder.add_edge(
-    "tool",
+    "tools",
     "agent"
 )
 
@@ -157,30 +189,40 @@ agent = graph_builder.compile()
 
 
 # ============================================================
-# 8. RUN AGENT
+# 10. RUN AGENT
 # ============================================================
 
 if __name__ == "__main__":
 
-    print("\n===================================")
-    print("       AI TOOL-CALLING AGENT")
-    print("===================================\n")
+    print("\n======================================")
+    print("       DAILY SCHEDULE AGENT")
+    print("======================================")
 
-    user_input = input("You: ")
+    print("\nAvailable tools:")
+    print("- get_current_time")
+    print("- get_tasks")
 
-    result = agent.invoke(
-        {
-            "messages": [
-                {
-                    "role": "user",
-                    "content": user_input
-                }
-            ]
-        }
-    )
+    print("\nType 'exit' to quit.\n")
 
-    print("\nAgent:")
+    while True:
 
-    final_message = result["messages"][-1]
+        user_input = input("You: ")
 
-    print(final_message.content)
+        if user_input.lower() == "exit":
+            break
+
+        result = agent.invoke(
+            {
+                "messages": [
+                    HumanMessage(
+                        content=user_input
+                    )
+                ]
+            }
+        )
+
+        final_message = result["messages"][-1]
+
+        print("\nAgent:")
+        print(final_message.content)
+        print()
