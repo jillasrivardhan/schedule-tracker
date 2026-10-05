@@ -2,11 +2,13 @@ from typing import Annotated, TypedDict
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+
 from langchain_ollama import ChatOllama
 from langchain_core.tools import tool
 from langchain_core.messages import (
     BaseMessage,
-    HumanMessage
+    HumanMessage,
+    SystemMessage
 )
 from langgraph.graph import (
     StateGraph,
@@ -21,14 +23,23 @@ from database.database import (
     get_user_preferences,
     get_calendar_events
 )
-
-
+from App.models import DailySchedule
+from App.prompts import SCHEDULE_PLANNER_PROMPT
+from App.validator import validate_schedule
 # ============================================================
 # 1. AGENT STATE
 # ============================================================
 
 class AgentState(TypedDict):
-    messages: Annotated[list[BaseMessage], add_messages]
+
+    messages: Annotated[
+        list[BaseMessage],
+        add_messages
+    ]
+
+    planning_context: str
+
+    schedule: dict
 
 
 # ============================================================
@@ -172,8 +183,10 @@ llm_with_tools = llm.bind_tools(tools)
 
 def agent_node(state: AgentState):
 
+    messages = state["messages"]
+
     response = llm_with_tools.invoke(
-        state["messages"]
+        messages
     )
 
     return {
@@ -271,13 +284,20 @@ if __name__ == "__main__":
         if user_input.lower() == "exit":
             break
 
+        messages = [
+            SystemMessage(
+                content=SCHEDULE_PLANNER_PROMPT
+            ),
+            HumanMessage(
+                content=user_input
+            )
+        ]
+
         result = agent.invoke(
             {
-                "messages": [
-                    HumanMessage(
-                        content=user_input
-                    )
-                ]
+                "messages": messages,
+                "planning_context": "",
+                "schedule": {}
             }
         )
 
